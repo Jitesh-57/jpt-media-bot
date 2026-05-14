@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { verifySlackSignature, parseGenerateCommand, postMessage } from "@/lib/slack";
 import { createImageJob, createVideoJob } from "@/lib/pixelbin";
-import { saveJob } from "@/lib/job-store";
 import { generatingBlock } from "@/lib/slack-blocks";
 
 export const runtime = "nodejs";
@@ -51,20 +50,17 @@ export async function POST(req: NextRequest) {
   const appUrl = process.env.NEXT_PUBLIC_APP_URL!;
   const jobId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
-  // Build webhook URL that carries context back to us
-  const webhookUrl = `${appUrl}/api/pixelbin/webhook?jobId=${jobId}`;
-
-  // Save job metadata so the webhook handler can look it up
-  saveJob({
+  // Encode ALL context in the webhook URL — Vercel is stateless so we can't
+  // rely on in-memory store surviving across lambda invocations.
+  const params = new URLSearchParams({
     jobId,
     type,
     prompt,
-    slackChannelId: event.channel,
-    slackUserId: event.user,
-    slackTs: generatingMsg,
-    status: "processing",
-    createdAt: Date.now(),
+    channel: event.channel,
+    userId: event.user,
+    ...(generatingMsg ? { ts: generatingMsg } : {}),
   });
+  const webhookUrl = `${appUrl}/api/pixelbin/webhook?${params.toString()}`;
 
   // Fire generation async (don't await — the webhook will notify us when done)
   try {
