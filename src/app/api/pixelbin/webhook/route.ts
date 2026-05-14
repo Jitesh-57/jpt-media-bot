@@ -1,32 +1,44 @@
 import { NextRequest, NextResponse } from "next/server";
 import { updateMessage, postMessage } from "@/lib/slack";
 import { mediaReadyBlock } from "@/lib/slack-blocks";
-import { extractMediaUrl } from "@/lib/pixelbin";
-import type { PredictionResult } from "@/types";
 
 export const runtime = "nodejs";
 
+// Actual PixelBin webhook payload shape:
+// { id, event, data: { status, output: string[], ... } }
+interface PixelBinWebhookPayload {
+  id: string;
+  event: string;
+  data: {
+    status: "SUCCESS" | "FAILURE" | "PROCESSING" | "PENDING";
+    output?: string[];
+    error?: string;
+  };
+}
+
 export async function POST(req: NextRequest) {
-  // All context is encoded in the URL — no in-memory store needed
   const { searchParams } = req.nextUrl;
-  const jobId   = searchParams.get("jobId");
   const type    = searchParams.get("type") as "image" | "video" | null;
   const prompt  = searchParams.get("prompt") ?? "";
   const channel = searchParams.get("channel");
   const ts      = searchParams.get("ts") ?? undefined;
+  const jobId   = searchParams.get("jobId") ?? "unknown";
 
-  if (!jobId || !type || !channel) {
+  if (!type || !channel) {
     console.error("Webhook missing required params", Object.fromEntries(searchParams));
     return NextResponse.json({ ok: true });
   }
 
-  const result: PredictionResult = await req.json();
-  console.log(`Webhook [${jobId}] status=${result.status}`);
+  const body: PixelBinWebhookPayload = await req.json();
+  const { status, output, error } = body.data ?? {};
 
-  if (result.status === "SUCCESS") {
-    const mediaUrl = extractMediaUrl(result);
+  console.log(`Webhook [${jobId}] event=${body.event} status=${status}`);
+
+  if (status === "SUCCESS") {
+    const mediaUrl = Array.isArray(output) && output.length > 0 ? output[0] : null;
+
     if (!mediaUrl) {
-      console.error("SUCCESS but no media URL in result:", JSON.stringify(result).slice(0, 500));
+      console.error("SUCCESS but no URL in output:", JSON.stringify(body).slice(0, 500));
       await notifyFailure(channel, ts, type);
       return NextResponse.json({ ok: true });
     }
@@ -38,8 +50,8 @@ export async function POST(req: NextRequest) {
       await postMessage(channel, { ...readyPayload, text: `Your ${type} is ready!` });
     }
 
-  } else if (result.status === "FAILURE") {
-    await notifyFailure(channel, ts, type, result.error);
+  } else if (status === "FAILURE") {
+    await notifyFailure(channel, ts, type, error);
   }
 
   return NextResponse.json({ ok: true });
