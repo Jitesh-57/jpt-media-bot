@@ -1,4 +1,4 @@
-import { WebClient } from "@slack/web-api";
+import { WebClient, type ChatPostMessageArguments } from "@slack/web-api";
 import crypto from "crypto";
 
 export const slack = new WebClient(process.env.SLACK_BOT_TOKEN);
@@ -51,9 +51,10 @@ export function parseGenerateCommand(text: string): {
 // Post a message and return its timestamp (for later updates)
 export async function postMessage(
   channel: string,
-  payload: Record<string, unknown>
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  payload: Record<string, any>
 ): Promise<string | undefined> {
-  const res = await slack.chat.postMessage({ channel, ...payload });
+  const res = await slack.chat.postMessage({ channel, ...payload } as ChatPostMessageArguments);
   return res.ts as string | undefined;
 }
 
@@ -63,7 +64,7 @@ export async function updateMessage(
   ts: string,
   payload: Record<string, unknown>
 ): Promise<void> {
-  await slack.chat.update({ channel, ts, ...payload });
+  await slack.chat.update({ channel, ts, ...payload } as Parameters<typeof slack.chat.update>[0]);
 }
 
 // Post an ephemeral message (only visible to one user)
@@ -72,5 +73,5 @@ export async function postEphemeral(
   user: string,
   payload: Record<string, unknown>
 ): Promise<void> {
-  await slack.chat.postEphemeral({ channel, user, ...payload });
+  await slack.chat.postEphemeral({ channel, user, ...payload } as Parameters<typeof slack.chat.postEphemeral>[0]);
 }

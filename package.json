@@ -14,7 +14,7 @@
     "react-dom": "^18.3.1",
     "@slack/web-api": "^7.3.4",
     "@slack/events-api": "^3.0.1",
-    "@pixelbin/admin": "^2.1.0",
+    "@pixelbin/admin": "^4.2.0",
     "axios": "^1.7.7",
     "form-data": "^4.0.1",
     "twitter-api-v2": "^1.17.2",
