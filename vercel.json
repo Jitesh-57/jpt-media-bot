@@ -3,25 +3,5 @@
     "src/app/api/**": {
       "maxDuration": 300
     }
-  },
-  "env": {
-    "PIXELBIN_API_TOKEN": "@pixelbin-api-token",
-    "PIXELBIN_ACCESS_KEY": "@pixelbin-access-key",
-    "PIXELBIN_CLOUD_NAME": "@pixelbin-cloud-name",
-    "SLACK_BOT_TOKEN": "@slack-bot-token",
-    "SLACK_SIGNING_SECRET": "@slack-signing-secret",
-    "NEXT_PUBLIC_APP_URL": "@app-url",
-    "INSTAGRAM_ACCESS_TOKEN": "@instagram-access-token",
-    "INSTAGRAM_BUSINESS_ACCOUNT_ID": "@instagram-business-account-id",
-    "LINKEDIN_ACCESS_TOKEN": "@linkedin-access-token",
-    "LINKEDIN_PERSON_URN": "@linkedin-person-urn",
-    "LINKEDIN_ORG_URN": "@linkedin-org-urn",
-    "TWITTER_API_KEY": "@twitter-api-key",
-    "TWITTER_API_SECRET": "@twitter-api-secret",
-    "TWITTER_ACCESS_TOKEN": "@twitter-access-token",
-    "TWITTER_ACCESS_TOKEN_SECRET": "@twitter-access-token-secret",
-    "YOUTUBE_CLIENT_ID": "@youtube-client-id",
-    "YOUTUBE_CLIENT_SECRET": "@youtube-client-secret",
-    "YOUTUBE_REFRESH_TOKEN": "@youtube-refresh-token"
   }
 }
