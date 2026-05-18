@@ -17,12 +17,12 @@ interface PixelBinWebhookPayload {
 
 export async function POST(req: NextRequest) {
   const { searchParams } = req.nextUrl;
-  const type         = searchParams.get("type") as "image" | "video" | null;
-  const prompt       = searchParams.get("prompt") ?? "";
-  const channel      = searchParams.get("channel");
-  const ts           = searchParams.get("ts") ?? undefined;
-  const jobId        = searchParams.get("jobId") ?? "unknown";
-  const platformsRaw = searchParams.get("platforms") ?? "";
+  const type          = searchParams.get("type") as "image" | "video" | null;
+  const prompt        = searchParams.get("prompt") ?? "";
+  const channel       = searchParams.get("channel");
+  const ts            = searchParams.get("ts") ?? undefined;
+  const jobId         = searchParams.get("jobId") ?? "unknown";
+  const platformsRaw  = searchParams.get("platforms") ?? "";
   const customCaption = searchParams.get("customCaption") ?? "";
 
   if (!type || !channel) {
@@ -39,39 +39,37 @@ export async function POST(req: NextRequest) {
 
   if (status === "SUCCESS") {
     const mediaUrl = Array.isArray(output) && output.length > 0 ? output[0] : null;
-
     if (!mediaUrl) {
       console.error("SUCCESS but no URL in output:", JSON.stringify(body).slice(0, 300));
       await notifyFailure(channel, ts, type);
       return NextResponse.json({ ok: true });
     }
 
-    // Generate or use custom caption
+    // Generate or use provided caption
     const caption = customCaption.trim() || await generateCaption(prompt, type);
 
     if (type === "image") {
-      // Image: show inline preview in the existing message
-      const readyPayload = imageReadyBlock(prompt, mediaUrl, caption, jobId, platforms);
+      const payload = imageReadyBlock({ prompt, mediaUrl, caption, jobId, platforms });
       if (ts) {
-        await updateMessage(channel, ts, { ...readyPayload, text: `Your image is ready!` });
+        await updateMessage(channel, ts, payload);
       } else {
-        await postMessage(channel, { ...readyPayload, text: `Your image is ready!` });
+        await postMessage(channel, payload);
       }
     } else {
-      // Video: first update the "generating..." message with download link + sharing UI
-      const readyPayload = videoReadyBlock(prompt, mediaUrl, caption, jobId, platforms);
+      // Video: update the "generating..." message with ready block
+      const payload = videoReadyBlock({ prompt, mediaUrl, caption, jobId, platforms });
       if (ts) {
-        await updateMessage(channel, ts, { ...readyPayload, text: `Your video is ready!` });
+        await updateMessage(channel, ts, payload);
       } else {
-        await postMessage(channel, { ...readyPayload, text: `Your video is ready!` });
+        await postMessage(channel, payload);
       }
 
-      // Then upload the video file to Slack for native in-channel playback
+      // Upload video to Slack for native in-channel playback
       try {
         await uploadVideoToSlack(channel, mediaUrl, prompt, caption);
       } catch (uploadErr) {
         console.error("Video upload to Slack failed:", uploadErr);
-        // Non-fatal — user still has the download link above
+        // Non-fatal — user still has the download link
       }
     }
 
@@ -82,12 +80,7 @@ export async function POST(req: NextRequest) {
   return NextResponse.json({ ok: true });
 }
 
-async function notifyFailure(
-  channel: string,
-  ts: string | undefined,
-  type: string,
-  error?: string
-) {
+async function notifyFailure(channel: string, ts: string | undefined, type: string, error?: string) {
   const text = `❌ ${type} generation failed.${error ? `\n> ${error}` : ""}\nPlease try again.`;
   if (ts) {
     await updateMessage(channel, ts, { text, blocks: [] });
