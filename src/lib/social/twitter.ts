@@ -1,43 +1,55 @@
 import { TwitterApi } from "twitter-api-v2";
+import sharp from "sharp";
 import type { MediaType, PostResult } from "@/types";
 
+// Twitter limits: images ≤ 5 MB, videos ≤ 512 MB
+const MAX_IMAGE_BYTES = 4.5 * 1024 * 1024; // 4.5 MB to stay safely under
+
 /**
- * Post an image or video to Twitter / X.
- *
- * Supports two auth modes (uses whichever credentials are set):
- *
- * Mode A — OAuth 2.0 (what you have now):
- *   TWITTER_CLIENT_ID + TWITTER_CLIENT_SECRET
- *   TWITTER_ACCESS_TOKEN  (OAuth 2.0 user access token)
- *   TWITTER_REFRESH_TOKEN
- *   → Posts tweet with text + media URL appended
- *
- * Mode B — OAuth 1.0a (full media upload, native preview):
- *   TWITTER_API_KEY + TWITTER_API_SECRET
- *   TWITTER_ACCESS_TOKEN_OAUTH1 + TWITTER_ACCESS_TOKEN_SECRET
- *   → Uploads media directly, native image/video in tweet
+ * Compress + convert image to JPEG ≤ 4.5 MB at max 1920px wide.
+ * Twitter works best with JPEG; PNG from PixelBin can be 5–8 MB.
  */
+async function compressImage(buffer: Buffer): Promise<{ data: Buffer; mimeType: "image/jpeg" }> {
+  let quality = 85;
+  let data = await sharp(buffer)
+    .resize({ width: 1920, height: 1920, fit: "inside", withoutEnlargement: true })
+    .jpeg({ quality })
+    .toBuffer();
+
+  // Reduce quality further if still over limit
+  while (data.length > MAX_IMAGE_BYTES && quality > 40) {
+    quality -= 10;
+    data = await sharp(buffer)
+      .resize({ width: 1920, height: 1920, fit: "inside", withoutEnlargement: true })
+      .jpeg({ quality })
+      .toBuffer();
+  }
+
+  console.log(`Image compressed: ${(data.length / 1024 / 1024).toFixed(1)} MB at quality ${quality}`);
+  return { data, mimeType: "image/jpeg" };
+}
+
 export async function postToTwitter(
   mediaUrl: string,
   mediaType: MediaType,
   caption: string
 ): Promise<PostResult> {
 
-  // ── Mode B: OAuth 1.0a (full media upload) ──────────────────────────────
-  const apiKey        = process.env.TWITTER_API_KEY;
-  const apiSecret     = process.env.TWITTER_API_SECRET;
-  const accessToken1  = process.env.TWITTER_ACCESS_TOKEN_OAUTH1;
-  const accessSecret  = process.env.TWITTER_ACCESS_TOKEN_SECRET;
+  // ── OAuth 1.0a (full media upload — preferred) ───────────────────────────
+  const apiKey       = process.env.TWITTER_API_KEY;
+  const apiSecret    = process.env.TWITTER_API_SECRET;
+  const accessToken1 = process.env.TWITTER_ACCESS_TOKEN_OAUTH1;
+  const accessSecret = process.env.TWITTER_ACCESS_TOKEN_SECRET;
 
   if (apiKey && apiSecret && accessToken1 && accessSecret) {
     return postWithOAuth1(apiKey, apiSecret, accessToken1, accessSecret, mediaUrl, mediaType, caption);
   }
 
-  // ── Mode A: OAuth 2.0 (text + URL, no native media upload) ─────────────
-  const clientId      = process.env.TWITTER_CLIENT_ID;
-  const clientSecret  = process.env.TWITTER_CLIENT_SECRET;
-  const accessToken2  = process.env.TWITTER_ACCESS_TOKEN;
-  const refreshToken  = process.env.TWITTER_REFRESH_TOKEN;
+  // ── OAuth 2.0 fallback (text + URL) ─────────────────────────────────────
+  const accessToken2 = process.env.TWITTER_ACCESS_TOKEN;
+  const clientId     = process.env.TWITTER_CLIENT_ID;
+  const clientSecret = process.env.TWITTER_CLIENT_SECRET;
+  const refreshToken = process.env.TWITTER_REFRESH_TOKEN;
 
   if (accessToken2) {
     return postWithOAuth2(clientId, clientSecret, accessToken2, refreshToken, mediaUrl, caption);
@@ -46,7 +58,7 @@ export async function postToTwitter(
   return { platform: "twitter", success: false, error: "Twitter credentials not configured" };
 }
 
-// ── OAuth 1.0a: uploads media + posts native tweet ──────────────────────────
+// ── OAuth 1.0a: uploads compressed media + posts native tweet ────────────────
 async function postWithOAuth1(
   apiKey: string, apiSecret: string,
   accessToken: string, accessSecret: string,
@@ -55,70 +67,75 @@ async function postWithOAuth1(
   try {
     const client = new TwitterApi({ appKey: apiKey, appSecret: apiSecret, accessToken, accessSecret });
 
+    // Download media
     const mediaRes = await fetch(mediaUrl);
-    const mediaBuffer = Buffer.from(await mediaRes.arrayBuffer());
-    const mimeType = mediaType === "video" ? "video/mp4" : "image/jpeg";
+    if (!mediaRes.ok) throw new Error(`Failed to download media: ${mediaRes.status}`);
+    const rawBuffer = Buffer.from(await mediaRes.arrayBuffer());
 
-    const mediaId = await client.v1.uploadMedia(mediaBuffer, { mimeType });
-    const tweet = await client.v2.tweet({
-      text: caption.slice(0, 280),
-      media: { media_ids: [mediaId] },
-    });
+    let uploadBuffer: Buffer;
+    let mimeType: string;
+
+    if (mediaType === "video") {
+      uploadBuffer = rawBuffer;
+      mimeType = "video/mp4";
+    } else {
+      // Compress image to stay under Twitter's 5 MB limit
+      const compressed = await compressImage(rawBuffer);
+      uploadBuffer = compressed.data;
+      mimeType = compressed.mimeType;
+    }
+
+    // Upload media to Twitter
+    const mediaId = await client.v1.uploadMedia(uploadBuffer, { mimeType });
+
+    // Build tweet text (max 280 chars)
+    const tweetText = caption.slice(0, 277) + (caption.length > 277 ? "..." : "");
+
+    // Use v1.1 statuses/update — works on free tier; v2 tweets endpoint requires paid plan (402)
+    const tweet = await client.v1.tweet(tweetText, { media_ids: mediaId });
 
     return {
       platform: "twitter",
       success: true,
-      postUrl: `https://twitter.com/i/web/status/${tweet.data.id}`,
+      postUrl: `https://twitter.com/i/web/status/${tweet.id_str}`,
     };
   } catch (err) {
+    console.error("Twitter OAuth1 post failed:", err);
     return { platform: "twitter", success: false, error: String(err) };
   }
 }
 
-// ── OAuth 2.0: text tweet + media URL (refreshes token if needed) ────────────
+// ── OAuth 2.0: text tweet with media URL (no media upload) ───────────────────
 async function postWithOAuth2(
-  clientId: string | undefined,
-  clientSecret: string | undefined,
-  accessToken: string,
-  refreshToken: string | undefined,
-  mediaUrl: string,
-  caption: string
+  clientId: string | undefined, clientSecret: string | undefined,
+  accessToken: string, refreshToken: string | undefined,
+  mediaUrl: string, caption: string
 ): Promise<PostResult> {
   try {
     let token = accessToken;
 
-    // Try to refresh if client credentials are available
     if (refreshToken && clientId && clientSecret) {
       try {
-        const refreshClient = new TwitterApi({ clientId, clientSecret });
-        const { accessToken: newToken, refreshToken: newRefresh } =
-          await refreshClient.refreshOAuth2Token(refreshToken);
+        const { accessToken: newToken } = await new TwitterApi({ clientId, clientSecret })
+          .refreshOAuth2Token(refreshToken);
         token = newToken;
-        // Log new tokens so they can be updated (Vercel doesn't auto-update env vars)
-        if (newRefresh) {
-          console.log("Twitter token refreshed. New refresh token:", newRefresh.slice(0, 20) + "...");
-        }
-      } catch (refreshErr) {
-        console.warn("Token refresh failed, using existing token:", refreshErr);
-      }
+      } catch { /* use existing token */ }
     }
 
     const client = new TwitterApi(token);
-
-    // Build tweet text — keep under 280 chars, append media URL for preview
-    const maxTextLen = 280 - mediaUrl.length - 2;
-    const text = caption.length > maxTextLen
-      ? caption.slice(0, maxTextLen - 3) + `...\n${mediaUrl}`
+    const maxLen = 277 - mediaUrl.length;
+    const text = caption.length > maxLen
+      ? caption.slice(0, maxLen - 3) + `...\n${mediaUrl}`
       : `${caption}\n${mediaUrl}`;
 
     const tweet = await client.v2.tweet({ text });
-
     return {
       platform: "twitter",
       success: true,
       postUrl: `https://twitter.com/i/web/status/${tweet.data.id}`,
     };
   } catch (err) {
+    console.error("Twitter OAuth2 post failed:", err);
     return { platform: "twitter", success: false, error: String(err) };
   }
 }
