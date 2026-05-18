@@ -1,19 +1,20 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type { MediaType } from "@/types";
 
-const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-
 /**
  * Generate a platform-optimised social media caption with hashtags.
- * Falls back to a simple template if the API key isn't set.
+ * Falls back to a simple template if the API key isn't set or is a placeholder.
  */
 export async function generateCaption(
   prompt: string,
   mediaType: MediaType
 ): Promise<string> {
-  if (!process.env.ANTHROPIC_API_KEY) {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey || apiKey.includes("placeholder") || !apiKey.startsWith("sk-ant-")) {
     return `✨ ${prompt}\n\n#AI #GeneratedContent #PixelBin #JPT`;
   }
+
+  const client = new Anthropic({ apiKey });
 
   try {
     const msg = await client.messages.create({

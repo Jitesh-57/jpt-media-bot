@@ -35,7 +35,7 @@ export async function POST(req: NextRequest) {
   const body: PixelBinWebhookPayload = await req.json();
   const { status, output, error } = body.data ?? {};
 
-  console.log(`Webhook [${jobId}] event=${body.event} status=${status}`);
+  console.log(`Webhook [${jobId}] event=${body.event} status=${status} type=${type} channel=${channel} ts=${ts}`);
 
   if (status === "SUCCESS") {
     const mediaUrl = Array.isArray(output) && output.length > 0 ? output[0] : null;
@@ -50,18 +50,33 @@ export async function POST(req: NextRequest) {
 
     if (type === "image") {
       const payload = imageReadyBlock({ prompt, mediaUrl, caption, jobId, platforms });
-      if (ts) {
-        await updateMessage(channel, ts, payload);
-      } else {
-        await postMessage(channel, payload);
+      try {
+        if (ts) {
+          console.log(`Updating image message channel=${channel} ts=${ts}`);
+          await updateMessage(channel, ts, payload);
+        } else {
+          await postMessage(channel, payload);
+        }
+        console.log("Image message updated successfully");
+      } catch (slackErr) {
+        console.error("Failed to update Slack message with image:", slackErr);
+        // Try posting a fresh message as fallback
+        try { await postMessage(channel, payload); } catch { /* ignore */ }
       }
     } else {
       // Video: update the "generating..." message with ready block
       const payload = videoReadyBlock({ prompt, mediaUrl, caption, jobId, platforms });
-      if (ts) {
-        await updateMessage(channel, ts, payload);
-      } else {
-        await postMessage(channel, payload);
+      try {
+        if (ts) {
+          console.log(`Updating video message channel=${channel} ts=${ts}`);
+          await updateMessage(channel, ts, payload);
+        } else {
+          await postMessage(channel, payload);
+        }
+        console.log("Video message updated successfully");
+      } catch (slackErr) {
+        console.error("Failed to update Slack message with video:", slackErr);
+        try { await postMessage(channel, payload); } catch { /* ignore */ }
       }
 
       // Upload video to Slack for native in-channel playback
@@ -74,7 +89,11 @@ export async function POST(req: NextRequest) {
     }
 
   } else if (status === "FAILURE") {
-    await notifyFailure(channel, ts, type, error);
+    try {
+      await notifyFailure(channel, ts, type, error);
+    } catch (err) {
+      console.error("Failed to notify failure in Slack:", err);
+    }
   }
 
   return NextResponse.json({ ok: true });

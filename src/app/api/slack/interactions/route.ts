@@ -84,8 +84,10 @@ export async function POST(req: NextRequest) {
         text: `⏳ Generating your ${type}...`,
       });
 
-      // Kick off generation in background
-      kickOffGeneration({ type, prompt, channel: channelId, userId, ts, platforms, customCaption });
+      // Kick off generation — MUST be awaited so PixelBin job is created
+      // before Vercel terminates the function. createImageJob/createVideoJob
+      // are fast (<2s), well within Slack's 3-second acknowledgment window.
+      await kickOffGeneration({ type, prompt, channel: channelId, userId, ts, platforms, customCaption });
 
       return NextResponse.json({ response_action: "clear" });
     }
