@@ -6,8 +6,12 @@ function fallbackPost(prompt: string): string {
   return `✨ ${prompt}\n\n#AI #GeneratedContent #PixelBin #AIArt #CreativeAI #DigitalArt #AIGenerated #Innovation #FutureOfCreativity #ContentCreation`;
 }
 
-const POST_PROMPT = (mediaRef: string) =>
-  `You are a world-class social media content creator. Write a complete, ready-to-post social media post for ${mediaRef}.
+const POST_PROMPT = (mediaRef: string, userNote?: string) => {
+  const noteSection = userNote
+    ? `\n\nUser reference note (use this as creative direction / tone guide — do NOT copy verbatim, use it to shape the style and angle of the post):\n"${userNote}"`
+    : "";
+
+  return `You are a world-class social media content creator. Write a complete, ready-to-post social media post for ${mediaRef}.${noteSection}
 
 Structure the post EXACTLY like this:
 [A punchy, scroll-stopping first line / hook — no more than 12 words]
@@ -23,12 +27,14 @@ Rules:
 - Total body text under 200 characters (excluding hashtags)
 - Hashtags go on a SEPARATE line at the end
 - Return ONLY the post — no preamble, no explanation`;
+};
 
 // ── GitHub Models — GPT-4o Vision (free with any GitHub account) ─────────────
 async function generateWithGitHub(
   prompt: string,
   mediaType: MediaType,
-  mediaUrl?: string
+  mediaUrl?: string,
+  userNote?: string
 ): Promise<string | null> {
   const token = process.env.GITHUB_TOKEN;
   if (!token || token.includes("placeholder")) return null;
@@ -48,7 +54,7 @@ async function generateWithGitHub(
   if (mediaType === "image" && mediaUrl) {
     content.push({ type: "image_url", image_url: { url: mediaUrl, detail: "high" } });
   }
-  content.push({ type: "text", text: POST_PROMPT(mediaRef) });
+  content.push({ type: "text", text: POST_PROMPT(mediaRef, userNote) });
 
   try {
     const res = await client.chat.completions.create({
@@ -72,7 +78,8 @@ async function generateWithGitHub(
 async function generateWithOpenAI(
   prompt: string,
   mediaType: MediaType,
-  mediaUrl?: string
+  mediaUrl?: string,
+  userNote?: string
 ): Promise<string | null> {
   const key = process.env.OPENAI_API_KEY;
   if (!key || key.includes("placeholder") || !key.startsWith("sk-")) return null;
@@ -88,7 +95,7 @@ async function generateWithOpenAI(
   if (mediaType === "image" && mediaUrl) {
     content.push({ type: "image_url", image_url: { url: mediaUrl, detail: "high" } });
   }
-  content.push({ type: "text", text: POST_PROMPT(mediaRef) });
+  content.push({ type: "text", text: POST_PROMPT(mediaRef, userNote) });
 
   try {
     const res = await client.chat.completions.create({
@@ -107,7 +114,8 @@ async function generateWithOpenAI(
 async function generateWithAnthropic(
   prompt: string,
   mediaType: MediaType,
-  mediaUrl?: string
+  mediaUrl?: string,
+  userNote?: string
 ): Promise<string | null> {
   const key = process.env.ANTHROPIC_API_KEY;
   if (!key || key.includes("placeholder") || !key.startsWith("sk-ant-")) return null;
@@ -123,7 +131,7 @@ async function generateWithAnthropic(
   if (mediaType === "image" && mediaUrl) {
     content.push({ type: "image", source: { type: "url", url: mediaUrl } } as Anthropic.ImageBlockParam);
   }
-  content.push({ type: "text", text: POST_PROMPT(mediaRef) });
+  content.push({ type: "text", text: POST_PROMPT(mediaRef, userNote) });
 
   try {
     const msg = await client.messages.create({
@@ -152,15 +160,16 @@ async function generateWithAnthropic(
 export async function generatePost(
   prompt: string,
   mediaType: MediaType,
-  mediaUrl?: string
+  mediaUrl?: string,
+  userNote?: string
 ): Promise<string> {
-  const ghResult = await generateWithGitHub(prompt, mediaType, mediaUrl);
+  const ghResult = await generateWithGitHub(prompt, mediaType, mediaUrl, userNote);
   if (ghResult) return ghResult;
 
-  const openaiResult = await generateWithOpenAI(prompt, mediaType, mediaUrl);
+  const openaiResult = await generateWithOpenAI(prompt, mediaType, mediaUrl, userNote);
   if (openaiResult) return openaiResult;
 
-  const anthropicResult = await generateWithAnthropic(prompt, mediaType, mediaUrl);
+  const anthropicResult = await generateWithAnthropic(prompt, mediaType, mediaUrl, userNote);
   if (anthropicResult) return anthropicResult;
 
   return fallbackPost(prompt);

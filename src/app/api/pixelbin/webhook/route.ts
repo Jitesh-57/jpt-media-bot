@@ -47,9 +47,9 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true });
     }
 
-    // Generate full post with Claude Vision (analyses the actual image)
-    // Falls back to template if API key not configured
-    const caption = customCaption.trim() || await generatePost(prompt, type, mediaUrl);
+    // Always generate a full AI post. If the user provided custom copy,
+    // pass it as a tone/reference guide rather than using it verbatim.
+    const caption = await generatePost(prompt, type, mediaUrl, customCaption.trim() || undefined);
 
     if (type === "image") {
       const payload = imageReadyBlock({ prompt, mediaUrl, caption, jobId, platforms, aspectRatio });
