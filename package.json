@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.96.0",
+    "@google/genai": "^2.4.0",
     "@pixelbin/admin": "^4.2.0",
     "@slack/events-api": "^3.0.1",
     "@slack/web-api": "^7.3.4",

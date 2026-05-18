@@ -1,5 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import OpenAI from "openai";
+import { GoogleGenAI } from "@google/genai";
 import type { MediaType } from "@/types";
 
 function fallbackPost(prompt: string): string {
@@ -24,7 +25,98 @@ Rules:
 - Hashtags go on a SEPARATE line at the end
 - Return ONLY the post — no preamble, no explanation`;
 
-// ── OpenAI / ChatGPT (GPT-4 Vision) ─────────────────────────────────────────
+// ── Google Gemini Flash — FREE, no billing, has Vision ───────────────────────
+async function generateWithGemini(
+  prompt: string,
+  mediaType: MediaType,
+  mediaUrl?: string
+): Promise<string | null> {
+  const key = process.env.GEMINI_API_KEY;
+  if (!key || key.includes("placeholder")) return null;
+
+  const ai = new GoogleGenAI({ apiKey: key });
+  const mediaRef =
+    mediaType === "image" && mediaUrl
+      ? "this AI-generated image (shown above)"
+      : `this AI-generated ${mediaType} about: "${prompt}"`;
+
+  try {
+    // Build parts — include the image URL for vision analysis
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const parts: any[] = [];
+    if (mediaType === "image" && mediaUrl) {
+      // Fetch and pass image bytes (Gemini needs base64 or inline data)
+      const imgRes = await fetch(mediaUrl);
+      if (imgRes.ok) {
+        const buffer = await imgRes.arrayBuffer();
+        const base64 = Buffer.from(buffer).toString("base64");
+        const mimeType = imgRes.headers.get("content-type") ?? "image/png";
+        parts.push({ inlineData: { data: base64, mimeType } });
+      }
+    }
+    parts.push({ text: POST_PROMPT(mediaRef) });
+
+    const result = await ai.models.generateContent({
+      model: "gemini-2.0-flash",
+      contents: [{ role: "user", parts }],
+    });
+
+    const text = result.text?.trim();
+    if (text) {
+      console.log("Gemini post generated successfully");
+      return text;
+    }
+    return null;
+  } catch (err) {
+    console.error("Gemini post generation failed:", err);
+    return null;
+  }
+}
+
+// ── GitHub Models — GPT-4o via GitHub account (free with rate limits) ────────
+async function generateWithGitHub(
+  prompt: string,
+  mediaType: MediaType,
+  mediaUrl?: string
+): Promise<string | null> {
+  const token = process.env.GITHUB_TOKEN;
+  if (!token || token.includes("placeholder")) return null;
+
+  const client = new OpenAI({
+    baseURL: "https://models.inference.ai.azure.com",
+    apiKey: token,
+  });
+  const mediaRef =
+    mediaType === "image" && mediaUrl
+      ? "this AI-generated image (shown above)"
+      : `this AI-generated ${mediaType} about: "${prompt}"`;
+
+  type OAIContent = OpenAI.Chat.ChatCompletionContentPart;
+  const content: OAIContent[] = [];
+  if (mediaType === "image" && mediaUrl) {
+    content.push({ type: "image_url", image_url: { url: mediaUrl, detail: "high" } });
+  }
+  content.push({ type: "text", text: POST_PROMPT(mediaRef) });
+
+  try {
+    const res = await client.chat.completions.create({
+      model: "gpt-4o",
+      max_tokens: 700,
+      messages: [{ role: "user", content }],
+    });
+    const text = res.choices[0]?.message?.content?.trim();
+    if (text) {
+      console.log("GitHub Models (GPT-4o) post generated successfully");
+      return text;
+    }
+    return null;
+  } catch (err) {
+    console.error("GitHub Models post generation failed:", err);
+    return null;
+  }
+}
+
+// ── OpenAI direct (requires billing) ─────────────────────────────────────────
 async function generateWithOpenAI(
   prompt: string,
   mediaType: MediaType,
@@ -59,7 +151,7 @@ async function generateWithOpenAI(
   }
 }
 
-// ── Anthropic / Claude Vision ─────────────────────────────────────────────────
+// ── Anthropic Claude Vision ───────────────────────────────────────────────────
 async function generateWithAnthropic(
   prompt: string,
   mediaType: MediaType,
@@ -97,26 +189,32 @@ async function generateWithAnthropic(
 
 /**
  * Generate a complete social media post (hook + body + CTA + hashtags).
- * Tries OpenAI (ChatGPT/GPT-4 Vision) first if OPENAI_API_KEY is set,
- * then falls back to Claude Vision if ANTHROPIC_API_KEY is set,
- * then falls back to a template.
+ *
+ * Priority order (uses whichever key is configured):
+ *  1. Google Gemini Flash  — GEMINI_API_KEY  (free, no billing)
+ *  2. GitHub Models GPT-4o — GITHUB_TOKEN    (free with any GitHub account)
+ *  3. OpenAI GPT-4o        — OPENAI_API_KEY  (requires billing)
+ *  4. Anthropic Claude     — ANTHROPIC_API_KEY
+ *  5. Template fallback
  */
 export async function generatePost(
   prompt: string,
   mediaType: MediaType,
   mediaUrl?: string
 ): Promise<string> {
-  // Try OpenAI first (user's preference: ChatGPT)
+  const geminiResult = await generateWithGemini(prompt, mediaType, mediaUrl);
+  if (geminiResult) return geminiResult;
+
+  const ghResult = await generateWithGitHub(prompt, mediaType, mediaUrl);
+  if (ghResult) return ghResult;
+
   const openaiResult = await generateWithOpenAI(prompt, mediaType, mediaUrl);
   if (openaiResult) return openaiResult;
 
-  // Fall back to Claude Vision
   const anthropicResult = await generateWithAnthropic(prompt, mediaType, mediaUrl);
   if (anthropicResult) return anthropicResult;
 
-  // Last resort template
   return fallbackPost(prompt);
 }
 
-// Alias for backwards compatibility
 export const generateCaption = generatePost;
