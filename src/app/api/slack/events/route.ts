@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { verifySlackSignature, parseGenerateCommand, isGreeting, postMessage } from "@/lib/slack";
-import { createImageJob, createVideoJob } from "@/lib/pixelbin";
+import { kickOffGeneration } from "@/lib/generation";
 import { generatingBlock, greetingBlock } from "@/lib/slack-blocks";
 
 export const runtime = "nodejs";
@@ -23,6 +23,10 @@ export async function POST(req: NextRequest) {
   }
 
   const event = body.event;
+
+  // Only respond to app_mention events from real users (not bots).
+  // Slack only delivers app_mention events in channels where the bot is a member,
+  // so this inherently restricts responses to channels the bot has been added to.
   if (!event || event.type !== "app_mention" || event.bot_id) {
     return NextResponse.json({ ok: true });
   }
@@ -37,7 +41,7 @@ export async function POST(req: NextRequest) {
 
   // ── Generate command via mention (e.g. @JPT generate image of ...) ────────
   const generatingMsg = await postMessage(event.channel, {
-    ...generatingBlock(type, prompt),
+    ...generatingBlock(type, prompt, "16:9"),
     text: `⏳ Generating your ${type}...`,
   });
 
@@ -49,51 +53,8 @@ export async function POST(req: NextRequest) {
     ts: generatingMsg,
     platforms: [],
     customCaption: "",
+    aspectRatio: "16:9",
   });
 
   return NextResponse.json({ ok: true });
-}
-
-// ── Shared job starter (used by both events + modal submission) ────────────────
-export async function kickOffGeneration(params: {
-  type: "image" | "video";
-  prompt: string;
-  channel: string;
-  userId: string;
-  ts?: string;
-  platforms: string[];
-  customCaption: string;
-}) {
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL!;
-  const jobId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-
-  const qs = new URLSearchParams({
-    jobId,
-    type: params.type,
-    prompt: params.prompt,
-    channel: params.channel,
-    userId: params.userId,
-    platforms: params.platforms.join(","),
-    customCaption: params.customCaption,
-    ...(params.ts ? { ts: params.ts } : {}),
-  });
-
-  const webhookUrl = `${appUrl}/api/pixelbin/webhook?${qs.toString()}`;
-
-  try {
-    if (params.type === "image") {
-      await createImageJob(params.prompt, webhookUrl);
-    } else {
-      await createVideoJob(params.prompt, webhookUrl);
-    }
-  } catch (err) {
-    console.error("PixelBin job creation failed:", err);
-    const { updateMessage, postMessage: pm } = await import("@/lib/slack");
-    const errText = `❌ Failed to start ${params.type} generation. Please try again.`;
-    if (params.ts) {
-      await updateMessage(params.channel, params.ts, { text: errText, blocks: [] });
-    } else {
-      await pm(params.channel, { text: errText });
-    }
-  }
 }

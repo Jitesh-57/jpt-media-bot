@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { updateMessage, postMessage, uploadVideoToSlack } from "@/lib/slack";
 import { imageReadyBlock, videoReadyBlock } from "@/lib/slack-blocks";
-import { generateCaption } from "@/lib/ai";
+import { generatePost } from "@/lib/ai";
+import type { AspectRatio } from "@/types";
 
 export const runtime = "nodejs";
 
@@ -24,6 +25,7 @@ export async function POST(req: NextRequest) {
   const jobId         = searchParams.get("jobId") ?? "unknown";
   const platformsRaw  = searchParams.get("platforms") ?? "";
   const customCaption = searchParams.get("customCaption") ?? "";
+  const aspectRatio   = (searchParams.get("aspectRatio") ?? "16:9") as AspectRatio;
 
   if (!type || !channel) {
     console.error("Webhook missing params", Object.fromEntries(searchParams));
@@ -35,7 +37,7 @@ export async function POST(req: NextRequest) {
   const body: PixelBinWebhookPayload = await req.json();
   const { status, output, error } = body.data ?? {};
 
-  console.log(`Webhook [${jobId}] event=${body.event} status=${status} type=${type} channel=${channel} ts=${ts}`);
+  console.log(`Webhook [${jobId}] event=${body.event} status=${status} type=${type} channel=${channel} ts=${ts} ratio=${aspectRatio}`);
 
   if (status === "SUCCESS") {
     const mediaUrl = Array.isArray(output) && output.length > 0 ? output[0] : null;
@@ -45,11 +47,12 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true });
     }
 
-    // Generate or use provided caption
-    const caption = customCaption.trim() || await generateCaption(prompt, type);
+    // Generate full post with Claude Vision (analyses the actual image)
+    // Falls back to template if API key not configured
+    const caption = customCaption.trim() || await generatePost(prompt, type, mediaUrl);
 
     if (type === "image") {
-      const payload = imageReadyBlock({ prompt, mediaUrl, caption, jobId, platforms });
+      const payload = imageReadyBlock({ prompt, mediaUrl, caption, jobId, platforms, aspectRatio });
       try {
         if (ts) {
           console.log(`Updating image message channel=${channel} ts=${ts}`);
@@ -60,12 +63,10 @@ export async function POST(req: NextRequest) {
         console.log("Image message updated successfully");
       } catch (slackErr) {
         console.error("Failed to update Slack message with image:", slackErr);
-        // Try posting a fresh message as fallback
         try { await postMessage(channel, payload); } catch { /* ignore */ }
       }
     } else {
-      // Video: update the "generating..." message with ready block
-      const payload = videoReadyBlock({ prompt, mediaUrl, caption, jobId, platforms });
+      const payload = videoReadyBlock({ prompt, mediaUrl, caption, jobId, platforms, aspectRatio });
       try {
         if (ts) {
           console.log(`Updating video message channel=${channel} ts=${ts}`);

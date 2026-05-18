@@ -1,5 +1,6 @@
 export type MediaType = "image" | "video";
 export type SocialPlatform = "instagram" | "linkedin" | "twitter" | "youtube";
+export type AspectRatio = "16:9" | "9:16" | "1:1";
 
 export interface GenerationJob {
   jobId: string;

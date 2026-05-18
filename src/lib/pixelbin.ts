@@ -1,5 +1,5 @@
 import { PixelbinConfig, PixelbinClient } from "@pixelbin/admin";
-import type { PredictionResult } from "@/types";
+import type { PredictionResult, AspectRatio } from "@/types";
 
 const config = new PixelbinConfig({
   domain: "https://api.pixelbin.io",
@@ -11,13 +11,14 @@ export const pixelbin = new PixelbinClient(config);
 // Generate image via NanoBanana Pro
 export async function createImageJob(
   prompt: string,
-  webhookUrl: string
+  webhookUrl: string,
+  aspectRatio: AspectRatio = "16:9"
 ): Promise<{ jobId: string }> {
   const job = await pixelbin.predictions.create({
     name: "nanoBananaPro_generate",
     input: {
       prompt,
-      aspect_ratio: "16:9",
+      aspect_ratio: aspectRatio,
       output_resolution: "2K",
     },
     webhook: webhookUrl,
@@ -26,15 +27,18 @@ export async function createImageJob(
 }
 
 // Generate video via Google Veo 3.1 Fast
+// Note: Veo only supports 16:9 and 9:16 — map 1:1 → 16:9
 export async function createVideoJob(
   prompt: string,
-  webhookUrl: string
+  webhookUrl: string,
+  aspectRatio: AspectRatio = "16:9"
 ): Promise<{ jobId: string }> {
+  const videoRatio = aspectRatio === "1:1" ? "16:9" : aspectRatio;
   const job = await pixelbin.predictions.create({
     name: "veo31Fast_generate",
     input: {
       prompt,
-      aspect_ratio: "16:9",
+      aspect_ratio: videoRatio,
       resolution: "720p",
       duration: "8",
       audio: "true", // must be string — SDK uses FormData which can't handle booleans
@@ -60,7 +64,6 @@ export function extractMediaUrl(result: PredictionResult): string | null {
   if (!output) return null;
   if (output.url) return output.url as string;
   if (output.urls && output.urls.length > 0) return output.urls[0];
-  // Some plugins return the URL at the root output object
   const firstUrl = Object.values(output).find(
     (v) => typeof v === "string" && (v.startsWith("https://cdn.pixelbin") || v.startsWith("https://"))
   );

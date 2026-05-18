@@ -1,4 +1,10 @@
-import type { MediaType } from "@/types";
+import type { MediaType, AspectRatio } from "@/types";
+
+const RATIO_LABEL: Record<AspectRatio, string> = {
+  "16:9": "🖥️ Desktop / Landscape (16:9)",
+  "9:16": "📱 Mobile / Portrait (9:16)",
+  "1:1":  "⬛ Square (1:1)",
+};
 
 // ─── Greeting message ──────────────────────────────────────────────────────────
 export function greetingBlock(userId: string) {
@@ -9,7 +15,7 @@ export function greetingBlock(userId: string) {
         type: "section",
         text: {
           type: "mrkdwn",
-          text: `Hey <@${userId}>! 👋 I'm *JPT*, your AI-powered content creator.\n\nDescribe what you want and I'll generate a stunning image or video — then write a caption with hashtags and help you post to Instagram, LinkedIn, Twitter and YouTube.`,
+          text: `Hey <@${userId}>! 👋 I'm *JPT*, your AI-powered content creator.\n\nDescribe what you want and I'll generate a stunning image or video — then write a *full social-media post* with hashtags and help you publish to Instagram, LinkedIn, Twitter and YouTube.`,
         },
       },
       {
@@ -39,6 +45,7 @@ export function creatorModal(channelId: string, userId: string) {
     close: { type: "plain_text", text: "Cancel" },
     private_metadata: JSON.stringify({ channelId, userId }),
     blocks: [
+      // ── Prompt ──
       {
         type: "input",
         block_id: "prompt_block",
@@ -53,6 +60,7 @@ export function creatorModal(channelId: string, userId: string) {
           },
         },
       },
+      // ── Media type ──
       {
         type: "input",
         block_id: "media_type_block",
@@ -70,10 +78,39 @@ export function creatorModal(channelId: string, userId: string) {
           },
         },
       },
+      // ── Aspect ratio ──
+      {
+        type: "input",
+        block_id: "aspect_ratio_block",
+        label: { type: "plain_text", text: "Format / Aspect Ratio" },
+        element: {
+          type: "radio_buttons",
+          action_id: "aspect_ratio_input",
+          options: [
+            {
+              text: { type: "plain_text", text: "🖥️ Desktop / Landscape (16:9)  — YouTube, Twitter, LinkedIn", emoji: true },
+              value: "16:9",
+            },
+            {
+              text: { type: "plain_text", text: "📱 Mobile / Portrait (9:16)  — Stories, Reels, TikTok, Shorts", emoji: true },
+              value: "9:16",
+            },
+            {
+              text: { type: "plain_text", text: "⬛ Square (1:1)  — Instagram Feed, LinkedIn (image only)", emoji: true },
+              value: "1:1",
+            },
+          ],
+          initial_option: {
+            text: { type: "plain_text", text: "🖥️ Desktop / Landscape (16:9)  — YouTube, Twitter, LinkedIn", emoji: true },
+            value: "16:9",
+          },
+        },
+      },
+      // ── Platforms ──
       {
         type: "input",
         block_id: "platform_block",
-        label: { type: "plain_text", text: "Post to social media" },
+        label: { type: "plain_text", text: "Post to social media (optional)" },
         optional: true,
         element: {
           type: "checkboxes",
@@ -86,10 +123,11 @@ export function creatorModal(channelId: string, userId: string) {
           ],
         },
       },
+      // ── Custom caption ──
       {
         type: "input",
         block_id: "caption_block",
-        label: { type: "plain_text", text: "Custom Caption (leave empty = AI auto-generates ✨)" },
+        label: { type: "plain_text", text: "Custom Post Copy (leave empty = AI generates ✨)" },
         optional: true,
         element: {
           type: "plain_text_input",
@@ -97,7 +135,7 @@ export function creatorModal(channelId: string, userId: string) {
           multiline: true,
           placeholder: {
             type: "plain_text",
-            text: "Leave empty and JPT will write a caption + hashtags for you...",
+            text: "Leave empty — JPT will look at your image/video and write the full post + hashtags automatically.",
           },
         },
       },
@@ -138,14 +176,14 @@ export function postModal(opts: {
       {
         type: "input",
         block_id: "caption_edit_block",
-        label: { type: "plain_text", text: "Caption / Content" },
+        label: { type: "plain_text", text: "Post Copy (edit before publishing)" },
         optional: true,
         element: {
           type: "plain_text_input",
           action_id: "caption_edit_input",
           multiline: true,
           initial_value: opts.caption,
-          placeholder: { type: "plain_text", text: "Your caption with hashtags..." },
+          placeholder: { type: "plain_text", text: "Your post copy with hashtags..." },
         },
       },
       {
@@ -164,14 +202,15 @@ export function postModal(opts: {
 }
 
 // ─── "Generating…" status message ─────────────────────────────────────────────
-export function generatingBlock(type: MediaType, prompt: string) {
+export function generatingBlock(type: MediaType, prompt: string, aspectRatio: AspectRatio = "16:9") {
+  const ratioLabel = RATIO_LABEL[aspectRatio];
   return {
     blocks: [
       {
         type: "section",
         text: {
           type: "mrkdwn",
-          text: `⏳ *Generating your ${type}...*\n> _${prompt}_\n\nThis may take ${type === "video" ? "2–4 minutes" : "~1 minute"}. I'll update this message when it's ready!`,
+          text: `⏳ *Generating your ${type}...*\n> _${prompt}_\n\n*Format:* ${ratioLabel}\n\nThis may take ${type === "video" ? "2–4 minutes" : "~1 minute"}. I'll update this message when it's ready!`,
         },
       },
     ],
@@ -185,7 +224,9 @@ export function imageReadyBlock(opts: {
   caption: string;
   jobId: string;
   platforms: string[];
+  aspectRatio?: AspectRatio;
 }) {
+  const ratioLabel = opts.aspectRatio ? RATIO_LABEL[opts.aspectRatio] : "";
   return {
     text: `🖼️ Your image is ready!`,
     blocks: [
@@ -193,7 +234,7 @@ export function imageReadyBlock(opts: {
         type: "section",
         text: {
           type: "mrkdwn",
-          text: `🖼️ *Your image is ready!*\n> _${opts.prompt}_`,
+          text: `🖼️ *Your image is ready!*\n> _${opts.prompt}_${ratioLabel ? `  ·  ${ratioLabel}` : ""}`,
         },
         accessory: {
           type: "button",
@@ -215,7 +256,7 @@ export function imageReadyBlock(opts: {
         type: "section",
         text: {
           type: "mrkdwn",
-          text: `✨ *AI-generated caption:*\n${opts.caption}`,
+          text: `✍️ *AI-generated post:*\n${opts.caption}`,
         },
       },
       {
@@ -223,7 +264,7 @@ export function imageReadyBlock(opts: {
         elements: [
           {
             type: "mrkdwn",
-            text: `<${opts.mediaUrl}|View / Download image>  ·  Click *Post to Social Media* to edit caption and publish`,
+            text: `<${opts.mediaUrl}|View / Download image>  ·  Click *Post to Social Media* to edit & publish`,
           },
         ],
       },
@@ -238,7 +279,9 @@ export function videoReadyBlock(opts: {
   caption: string;
   jobId: string;
   platforms: string[];
+  aspectRatio?: AspectRatio;
 }) {
+  const ratioLabel = opts.aspectRatio ? RATIO_LABEL[opts.aspectRatio] : "";
   return {
     text: `🎬 Your video is ready!`,
     blocks: [
@@ -246,7 +289,7 @@ export function videoReadyBlock(opts: {
         type: "section",
         text: {
           type: "mrkdwn",
-          text: `🎬 *Your video is ready!*\n> _${opts.prompt}_`,
+          text: `🎬 *Your video is ready!*\n> _${opts.prompt}_${ratioLabel ? `  ·  ${ratioLabel}` : ""}`,
         },
         accessory: {
           type: "button",
@@ -267,7 +310,7 @@ export function videoReadyBlock(opts: {
         type: "section",
         text: {
           type: "mrkdwn",
-          text: `✨ *AI-generated caption:*\n${opts.caption}`,
+          text: `✍️ *AI-generated post:*\n${opts.caption}`,
         },
       },
       {

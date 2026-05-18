@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { verifySlackSignature, openModal, postMessage } from "@/lib/slack";
 import { creatorModal, postModal, generatingBlock, postResultBlock } from "@/lib/slack-blocks";
-import { kickOffGeneration } from "@/app/api/slack/events/route";
-import type { SocialPlatform } from "@/types";
+import { kickOffGeneration } from "@/lib/generation";
+import type { SocialPlatform, AspectRatio } from "@/types";
 
 export const runtime = "nodejs";
 
@@ -63,6 +63,8 @@ export async function POST(req: NextRequest) {
       const prompt: string = state["prompt_block"]?.["prompt_input"]?.value ?? "";
       const type: "image" | "video" =
         state["media_type_block"]?.["media_type_input"]?.selected_option?.value ?? "image";
+      const aspectRatio: AspectRatio =
+        (state["aspect_ratio_block"]?.["aspect_ratio_input"]?.selected_option?.value as AspectRatio) ?? "16:9";
       const platforms: string[] =
         state["platform_block"]?.["platforms_input"]?.selected_options?.map(
           (o: { value: string }) => o.value
@@ -80,14 +82,13 @@ export async function POST(req: NextRequest) {
 
       // Post "generating..." to channel immediately
       const ts = await postMessage(channelId, {
-        ...generatingBlock(type, prompt),
+        ...generatingBlock(type, prompt, aspectRatio),
         text: `⏳ Generating your ${type}...`,
       });
 
-      // Kick off generation — MUST be awaited so PixelBin job is created
-      // before Vercel terminates the function. createImageJob/createVideoJob
-      // are fast (<2s), well within Slack's 3-second acknowledgment window.
-      await kickOffGeneration({ type, prompt, channel: channelId, userId, ts, platforms, customCaption });
+      // Kick off generation — awaited so the PixelBin job is registered
+      // before Vercel terminates the function. Job creation is fast (<2s).
+      await kickOffGeneration({ type, prompt, channel: channelId, userId, ts, platforms, customCaption, aspectRatio });
 
       return NextResponse.json({ response_action: "clear" });
     }
