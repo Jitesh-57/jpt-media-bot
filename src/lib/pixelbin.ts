@@ -37,7 +37,7 @@ export async function createVideoJob(
       aspect_ratio: "16:9",
       resolution: "720p",
       duration: "8",
-      audio: true,
+      audio: "true", // must be string — SDK uses FormData which can't handle booleans
     },
     webhook: webhookUrl,
   });
