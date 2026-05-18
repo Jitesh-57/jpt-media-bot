@@ -1,11 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import { updateMessage, postMessage } from "@/lib/slack";
-import { mediaReadyBlock } from "@/lib/slack-blocks";
+import { updateMessage, postMessage, uploadVideoToSlack } from "@/lib/slack";
+import { imageReadyBlock, videoReadyBlock } from "@/lib/slack-blocks";
+import { generateCaption } from "@/lib/ai";
 
 export const runtime = "nodejs";
 
-// Actual PixelBin webhook payload shape:
-// { id, event, data: { status, output: string[], ... } }
 interface PixelBinWebhookPayload {
   id: string;
   event: string;
@@ -18,16 +17,20 @@ interface PixelBinWebhookPayload {
 
 export async function POST(req: NextRequest) {
   const { searchParams } = req.nextUrl;
-  const type    = searchParams.get("type") as "image" | "video" | null;
-  const prompt  = searchParams.get("prompt") ?? "";
-  const channel = searchParams.get("channel");
-  const ts      = searchParams.get("ts") ?? undefined;
-  const jobId   = searchParams.get("jobId") ?? "unknown";
+  const type         = searchParams.get("type") as "image" | "video" | null;
+  const prompt       = searchParams.get("prompt") ?? "";
+  const channel      = searchParams.get("channel");
+  const ts           = searchParams.get("ts") ?? undefined;
+  const jobId        = searchParams.get("jobId") ?? "unknown";
+  const platformsRaw = searchParams.get("platforms") ?? "";
+  const customCaption = searchParams.get("customCaption") ?? "";
 
   if (!type || !channel) {
-    console.error("Webhook missing required params", Object.fromEntries(searchParams));
+    console.error("Webhook missing params", Object.fromEntries(searchParams));
     return NextResponse.json({ ok: true });
   }
+
+  const platforms = platformsRaw ? platformsRaw.split(",").filter(Boolean) : [];
 
   const body: PixelBinWebhookPayload = await req.json();
   const { status, output, error } = body.data ?? {};
@@ -38,16 +41,38 @@ export async function POST(req: NextRequest) {
     const mediaUrl = Array.isArray(output) && output.length > 0 ? output[0] : null;
 
     if (!mediaUrl) {
-      console.error("SUCCESS but no URL in output:", JSON.stringify(body).slice(0, 500));
+      console.error("SUCCESS but no URL in output:", JSON.stringify(body).slice(0, 300));
       await notifyFailure(channel, ts, type);
       return NextResponse.json({ ok: true });
     }
 
-    const readyPayload = mediaReadyBlock(type, prompt, mediaUrl, jobId);
-    if (ts) {
-      await updateMessage(channel, ts, { ...readyPayload, text: `Your ${type} is ready!` });
+    // Generate or use custom caption
+    const caption = customCaption.trim() || await generateCaption(prompt, type);
+
+    if (type === "image") {
+      // Image: show inline preview in the existing message
+      const readyPayload = imageReadyBlock(prompt, mediaUrl, caption, jobId, platforms);
+      if (ts) {
+        await updateMessage(channel, ts, { ...readyPayload, text: `Your image is ready!` });
+      } else {
+        await postMessage(channel, { ...readyPayload, text: `Your image is ready!` });
+      }
     } else {
-      await postMessage(channel, { ...readyPayload, text: `Your ${type} is ready!` });
+      // Video: first update the "generating..." message with download link + sharing UI
+      const readyPayload = videoReadyBlock(prompt, mediaUrl, caption, jobId, platforms);
+      if (ts) {
+        await updateMessage(channel, ts, { ...readyPayload, text: `Your video is ready!` });
+      } else {
+        await postMessage(channel, { ...readyPayload, text: `Your video is ready!` });
+      }
+
+      // Then upload the video file to Slack for native in-channel playback
+      try {
+        await uploadVideoToSlack(channel, mediaUrl, prompt, caption);
+      } catch (uploadErr) {
+        console.error("Video upload to Slack failed:", uploadErr);
+        // Non-fatal — user still has the download link above
+      }
     }
 
   } else if (status === "FAILURE") {
@@ -57,7 +82,12 @@ export async function POST(req: NextRequest) {
   return NextResponse.json({ ok: true });
 }
 
-async function notifyFailure(channel: string, ts: string | undefined, type: string, error?: string) {
+async function notifyFailure(
+  channel: string,
+  ts: string | undefined,
+  type: string,
+  error?: string
+) {
   const text = `❌ ${type} generation failed.${error ? `\n> ${error}` : ""}\nPlease try again.`;
   if (ts) {
     await updateMessage(channel, ts, { text, blocks: [] });
